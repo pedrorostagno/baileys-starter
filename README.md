@@ -45,6 +45,33 @@ Environment variables control everything:
 | `LOG_LEVEL`        | Logging level (info, debug, warn...).    |
 | `AI_SYSTEM_PROMPT` | Optional system prompt for OpenAI.       |
 
+## Project Structure
+
+```
+baileys-starter/
+├── auth_info_baileys/     # WhatsApp session data storage
+├── src/                   
+│   ├── ai/                # OpenAI integration for AI-powered responses
+│   ├── config/            # Configuration management from environment variables
+│   ├── handlers/          # Message handlers for processing WhatsApp messages
+│   ├── logger/            # Pino logger setup and configuration
+│   ├── routes/            # Express routes
+│   ├── server/            # Express server initialization
+│   ├── socket/            # Baileys WebSocket connection management
+│   ├── store/             # In-memory stores for QR codes and connection state
+│   ├── types/             # TypeScript type definitions
+│   ├── views/             # Handlebars templates for web UI
+│   │   └── layouts/       # Layout templates
+│   └── index.ts           # Main application entry point
+├── tests/                 # Test files
+├── .env.example           # Environment variables template
+├── BAILEYSDOCS.md         # Comprehensive Baileys documentation
+├── jest.config.cjs        # Jest testing configuration
+├── package.json           # Node.js dependencies and scripts
+├── README.md              # This file
+└── tsconfig.json          # TypeScript configuration
+```
+
 ## Documentation
 
 For detailed documentation about Baileys and WhatsApp bot development, check out:
