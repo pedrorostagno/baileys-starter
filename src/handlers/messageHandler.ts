@@ -1,79 +1,99 @@
-import { BaileysEventMap, WASocket, WAMessage } from 'baileys'
+// src/messageHandler.ts
 
+import { BaileysEventMap, WASocket, WAMessage } from 'baileys'
 import { config } from '../config/index.js'
-import { generateResponse } from '../ai/openai.js'
+import { detectRisk } from '../ai/classifier.js'
+import { getLastMessages } from '../ai/history.js'
 import { createLogger } from '../logger/index.js'
+import { supabase } from '../config/supabase.js'
 
 const logger = createLogger('MessageHandler')
 
+/**
+ * Configura el manejador de mensajes entrantes para el socket de Baileys.
+ * Escucha el evento 'messages.upsert' y procesa los mensajes nuevos que no sean del propio bot.
+ */
 export function setupMessageHandler(sock: WASocket) {
-    // Handle incoming messages
-    sock.ev.on(
-        'messages.upsert',
-        async ({ messages, type }: BaileysEventMap['messages.upsert']) => {
-            // Only process new messages
-            if (type !== 'notify') return
+  sock.ev.on(
+    'messages.upsert',
+    async ({ messages, type }: BaileysEventMap['messages.upsert']) => {
+      if (type !== 'notify') return
 
-            for (const message of messages) {
-                // Skip if no message content
-                if (!message.message) continue
+      for (const message of messages) {
+        if (!message.message) continue
+        if (message.key.fromMe) continue
 
-                // Skip messages from self
-                if (message.key.fromMe) continue
-
-                await handleMessage(sock, message)
-            }
-        }
-    )
+        await handleMessage(sock, message)
+      }
+    }
+  )
 }
 
+/**
+ * Procesa un mensaje individual recibido por WhatsApp.
+ * Incluye:
+ *  1) Recuperar el historial,
+ *  2) Detectar riesgos (grooming/estafa),
+ *  3) Guardar alertas o mensajes en Supabase,
+ *  4) Generar respuesta IA o fallback.
+ */
 async function handleMessage(sock: WASocket, message: WAMessage) {
-    try {
-        const remoteJid = message.key.remoteJid
-        if (!remoteJid) return
+  try {
+    const remoteJid = message.key.remoteJid
+    if (!remoteJid) return
 
-        // Get the text content from the message
-        const textContent =
-            message.message?.conversation || message.message?.extendedTextMessage?.text || ''
+    // Extraer el texto del mensaje
+    const textContent =
+      message.message?.conversation ||
+      message.message?.extendedTextMessage?.text ||
+      ''
+    if (!textContent) return
 
-        if (!textContent) return
+    logger.info('Message received', {
+      from: remoteJid,
+      text: textContent,
+      messageId: message.key.id
+    })
 
-        logger.info('Message received', {
-            from: remoteJid,
-            text: textContent,
-            messageId: message.key.id
-        })
+    // 1) Recuperar los últimos mensajes del chat
+    let chatHistory = await getLastMessages(remoteJid, 10)
+    chatHistory.push(textContent)
 
-        // If AI is enabled, use AI for all messages
-        if (config.bot.aiEnabled) {
-            logger.info('Processing AI request', { prompt: textContent, from: remoteJid })
+    // 2) Detectar riesgo
+    const { label, explanation } = await detectRisk(chatHistory)
+    logger.info('Risk detection', { label, explanation })
 
-            try {
-                const aiReply = await generateResponse(textContent)
-                await sock.sendMessage(remoteJid, { text: aiReply })
-                logger.info('AI response sent', { to: remoteJid, responseLength: aiReply.length })
-            } catch (error) {
-                logger.error('AI request failed', error)
-                await sock.sendMessage(remoteJid, {
-                    text: 'Sorry, AI is currently unavailable. Please try again later.'
-                })
-            }
-            return
-        }
+    // 3) Si detecta grooming o estafa, registrar alerta y notificar
+    if (label !== 'SIN RIESGO') {
+      await supabase.from('alerts').insert([{
+        from: remoteJid,
+        message_id: message.key.id,
+        label,
+        explanation,
+        text: textContent
+      }])
 
-        // Fallback to echo if AI is disabled
-        await sock.sendMessage(remoteJid, {
-            text: `Echo: ${textContent}`
-        })
-
-        logger.info('Echo response sent', {
-            to: remoteJid,
-            originalText: textContent
-        })
-    } catch (error) {
-        logger.error('Error handling message', error, {
-            messageId: message.key.id,
-            from: message.key.remoteJid
-        })
+      await sock.sendMessage(config.bot.recipientJid, {
+        text: `⚠️ *Alerta de ${label}*\n${explanation}\n\nMensaje:\n"${textContent}"`
+      })
+      return
     }
+
+    // 4) Guardar mensaje en tabla 'messages'
+    const { error: insertError } = await supabase.from('messages').insert([{
+      from: remoteJid,
+      text: textContent,
+      message_id: message.key.id,
+      raw: message
+    }])
+    if (insertError) {
+      logger.error('Error guardando mensaje en Supabase', insertError)
+    }
+
+  } catch (err) {
+    logger.error('Error handling message', err, {
+      messageId: message.key.id,
+      from: message.key.remoteJid
+    })
+  }
 }

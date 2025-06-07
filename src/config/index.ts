@@ -24,7 +24,8 @@ export const config = {
     // Bot
     bot: {
         name: process.env.BOT_NAME || 'HackTheChat',
-        aiEnabled: process.env.AI_ENABLED === 'true'
+        aiEnabled: process.env.AI_ENABLED === 'true',
+        recipientJid: "5491130699159@s.whatsapp.net",
     },
 
     // OpenAI
